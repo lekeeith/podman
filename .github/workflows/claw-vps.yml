@@ -1,0 +1,57 @@
+# .github/workflows/build-podman-ubuntu22.yml
+name: Build Podman for Ubuntu 22.04 (glibc 2.35)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.004  # 注意：正确写法是 ubuntu-22.04
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libdevmapper-dev \
+            libgpgme-dev \
+            libbtrfs-dev \
+            libseccomp-dev \
+            btrfs-progs \
+            pkg-config \
+            gcc
+
+      - name: Build podman with reduced dependencies
+        run: |
+          # 排除高依赖的存储驱动
+          make BUILDTAGS="exclude_graphdriver_devicemapper exclude_graphdriver_btrfs" bin/podman
+
+      - name: Collect runtime libraries (for bundling)
+        run: |
+          mkdir -p bundle/{bin,lib}
+          cp bin/podman bundle/bin/
+          # 复制 podman 依赖的所有 .so 到 bundle/lib/
+          ldd bin/podman | grep -o '/lib.*\.so[^ ]*' | xargs -I {} cp --copy-links {} bundle/lib/ 2>/dev/null || true
+          # 打包
+          tar -czf podman-bundle.tar.gz -C bundle .
+
+      - name: Verify binary
+        run: |
+          file bin/podman
+          ./bin/podman --version
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: podman-ubuntu22-bundle
+          path: podman-bundle.tar.gz
